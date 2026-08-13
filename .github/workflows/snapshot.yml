@@ -1,0 +1,38 @@
+name: snapshot
+
+# Publishes the SNAPSHOT an upstream-sync branch carries, so a port can be tried in a real
+# consumer before anyone reviews the diff. Releases go through publish.yml instead.
+on:
+  push:
+    branches: ['upstream/**']
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Only -SNAPSHOT belongs in the snapshot repository: a release version deployed here would
+      # be unsigned, mutable, and deleted after 90 days — everything a release must not be.
+      - name: Refuse a non-snapshot version
+        run: |
+          VERSION=$(sed -n 's/^version=//p' gradle.properties)
+          echo "version=$VERSION"
+          case "$VERSION" in
+            *-SNAPSHOT) ;;
+            *) echo "::error::$VERSION is not a snapshot; publish.yml handles releases"; exit 1 ;;
+          esac
+
+      - run: ./gradlew build --no-daemon
+
+      - name: Publish to Central snapshots
+        run: ./gradlew publishAllPublicationsToCentralSnapshotsRepository --no-daemon
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}

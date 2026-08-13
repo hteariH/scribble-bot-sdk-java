@@ -32,6 +32,23 @@ convenience for this org, not a public distribution channel.
    `publishingType` to `AUTOMATIC` in the workflow once you trust the pipeline.
 4. Bump `gradle.properties` to the next version.
 
+## Snapshots
+
+Branches named `upstream/**` — the ones the sync routine opens, see
+[docs/upstream-sync.md](docs/upstream-sync.md) — carry an `X.Y.Z-SNAPSHOT` version and publish to
+Central's snapshot repository on every push, so a port can be tried in a consumer before it is
+merged. Nothing is signed and nothing is staged: snapshots are overwritten in place and Central
+deletes them after 90 days.
+
+One-time: enable SNAPSHOT publishing for the `io.github.htearih` namespace in the Central Portal.
+The workflow reuses `CENTRAL_USERNAME` / `CENTRAL_PASSWORD`. Consumers add the repository:
+
+```kotlin
+repositories {
+    maven("https://central.sonatype.com/repository/maven-snapshots/")
+}
+```
+
 ## Locally
 
 ```bash

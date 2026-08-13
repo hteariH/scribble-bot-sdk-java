@@ -72,6 +72,19 @@ subprojects {
                 name = "staging"
                 url = rootProject.layout.buildDirectory.dir("staging-deploy").get().asFile.toURI()
             }
+            // Central Portal's snapshot repository, where the upstream-sync branches publish so a
+            // port can be tried in a consumer before it is merged. Nothing like a release: a plain
+            // Maven deploy, no bundle, no signatures, overwritten in place, dropped after 90 days.
+            maven {
+                name = "centralSnapshots"
+                url = uri("https://central.sonatype.com/repository/maven-snapshots/")
+                credentials {
+                    username = providers.gradleProperty("centralUsername")
+                        .orElse(providers.environmentVariable("CENTRAL_USERNAME")).orNull
+                    password = providers.gradleProperty("centralPassword")
+                        .orElse(providers.environmentVariable("CENTRAL_PASSWORD")).orNull
+                }
+            }
             maven {
                 name = "githubPackages"
                 url = uri("https://maven.pkg.github.com/hteariH/scribble-bot-sdk-java")
