@@ -11,3 +11,8 @@ build/
 
 *.log
 .DS_Store
+
+# Credentials that get dropped into the working copy by hand. Never commit these.
+sonatype_token.txt
+*.asc
+*.gpg
