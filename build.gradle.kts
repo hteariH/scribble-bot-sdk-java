@@ -42,6 +42,9 @@ subprojects {
             from(components["java"])
             pom {
                 name.set(project.name)
+                // Lazy: `subprojects {}` runs before the module build scripts that set
+                // `description`, and Maven Central rejects a POM without one.
+                description.set(provider { project.description })
                 url.set(providers.gradleProperty("pomUrl"))
                 licenses {
                     license {
