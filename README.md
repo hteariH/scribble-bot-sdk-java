@@ -49,12 +49,14 @@ HTTP response** — a list of actions, today only `addMessage`.
 
 Three consequences the SDK is shaped around:
 
-- **Nothing proactive is possible.** There is no send endpoint: a bot cannot start a conversation,
-  post a reminder, or follow up on its own.
-- **The answer is on a deadline.** The platform hangs up roughly ten seconds after the delivery
-  (measured: `status:0` at 10.000s in an edge access log). A slower answer is *lost*, not delayed —
-  which is why the starter defaults `scribble.reply-timeout` to 9s and posts a fallback line rather
-  than nothing.
+- **The hook reply is on a deadline.** The platform hangs up roughly ten seconds after the delivery
+  (measured: `status:0` at 10.000s in an edge access log). A slower answer in the *hook response* is
+  *lost*, not delayed — which is why the starter defaults `scribble.reply-timeout` to 9s and posts a
+  fallback line rather than nothing.
+- **A late or follow-up answer goes through `sendActions`.** There is still no way to start a
+  conversation cold in a room the bot has never heard from, but once a mention has arrived —
+  or for the platform's own default rooms — `bot.sendActions(room, actions)` can post into it after
+  the fact, for work that ran past the hook deadline or was never triggered by one.
 - **Signatures cover the raw bytes.** Read the body as `byte[]`. Re-serialising a parsed object
   changes its whitespace, and every HMAC then fails.
 
@@ -142,6 +144,20 @@ POSTs `{"url": …}` to `/api/v0/bot/webhook/register` as `Authorization: Bearer
 `scribble.public-url` does this once at startup and only logs a failure — a bot whose registration
 call failed still serves the URL it already had.
 
+## Sending actions after the deadline
+
+```java
+bot.sendActions("main", List.of(Action.addMessage("(sorry, that took a while) " + answer)));
+```
+
+POSTs `{"actions": […]}` to `/api/v0/room/{room}/actions` as `Authorization: Bearer <token>` — the
+way to answer once `handleHook`'s ~10s reply window has already closed, or to post into a room from
+work that was never triggered by a hook at all. Routed to the instance that actually hosts the room —
+learned from a prior `handleHook` delivery, the platform's own default instances, or a redirect this
+call itself just followed, so the next call to the same room skips the extra hop. Throws
+`IllegalArgumentException` when `room` is blank or `actions` is invalid, and `ScribblePubApiError` on
+a non-2xx answer.
+
 ## Plain text
 
 Rooms render no markup. `PlainText.flatten` is the safety net for when a model hands you
@@ -162,7 +178,7 @@ var result = bot.handleHook(body, bot.signature().sign(body));
 Against a running service:
 
 ```bash
-TOKEN=$(cat scribble_token.txt); BODY='{"trigger":{"trigger":"chat.mention","room":"main","timestamp":1779999999999,"text":"@mary hi","username":"you"}}'; SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$TOKEN" -hex | sed 's/^.*= //'); curl -sS -X POST localhost:8087/webhook -H 'Content-Type: application/json' -H "X-Scribble-Pub-Signature: sha256=$SIG" -d "$BODY"
+TOKEN=$(cat scribble_token.txt); BODY='{"trigger":{"trigger":"chat.mention","room":"main","timestamp":1779999999999,"text":"@mary hi","username":"you","directUrl":"https://eu.scribble.pub"}}'; SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$TOKEN" -hex | sed 's/^.*= //'); curl -sS -X POST localhost:8087/webhook -H 'Content-Type: application/json' -H "X-Scribble-Pub-Signature: sha256=$SIG" -d "$BODY"
 ```
 
 ## Building
