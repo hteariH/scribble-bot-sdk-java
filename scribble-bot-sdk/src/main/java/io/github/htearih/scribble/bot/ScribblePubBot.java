@@ -11,13 +11,17 @@ import io.github.htearih.scribble.bot.text.PlainText;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +61,17 @@ public final class ScribblePubBot {
     /** The only event {@link #on(String, HookHandler)} accepts. */
     public static final String HOOK_EVENT = "hook";
 
+    /**
+     * Pre-set production instances serving the most common public rooms, to avoid losing time on a
+     * 307 redirect to the instance that actually hosts them. Only used when {@link #baseUrl} is
+     * {@value #DEFAULT_BASE_URL}.
+     */
+    private static final Map<String, String> DEFAULT_ROOM_INSTANCES = Map.of(
+            "main", "https://eu.scribble.pub",
+            "sandbox", "https://eu.scribble.pub",
+            "chaos", "https://eu.scribble.pub",
+            "prosto_kot", "https://ap.scribble.pub");
+
     private static final Logger log = LoggerFactory.getLogger(ScribblePubBot.class);
 
     private final String token;
@@ -68,6 +83,13 @@ public final class ScribblePubBot {
     private final Json json;
     private final HttpClient httpClient;
     private final Duration requestTimeout;
+
+    /**
+     * Root instance lookup for rooms this bot has seen, keyed by lowercased room name. Avoids
+     * losing time on a 307 redirect when a replica instance is hit. Updated on every
+     * {@link #handleHook} delivery and every {@link #sendActions} redirect.
+     */
+    private final Map<String, String> roomInstanceMap;
 
     private volatile HookHandler hookHandler;
 
@@ -83,8 +105,13 @@ public final class ScribblePubBot {
         this.json = builder.json == null ? new Json() : builder.json;
         this.requestTimeout = builder.requestTimeout;
         this.httpClient = builder.httpClient == null
-                ? HttpClient.newBuilder().connectTimeout(builder.requestTimeout).build()
+                ? HttpClient.newBuilder()
+                        .connectTimeout(builder.requestTimeout)
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .build()
                 : builder.httpClient;
+        this.roomInstanceMap = new ConcurrentHashMap<>(
+                this.baseUrl.equals(DEFAULT_BASE_URL) ? DEFAULT_ROOM_INSTANCES : Map.of());
     }
 
     public static Builder builder() {
@@ -162,6 +189,8 @@ public final class ScribblePubBot {
             return HookResult.failure(400, "invalid payload");
         }
 
+        roomInstanceMap.put(request.trigger().room().toLowerCase(Locale.ROOT), request.trigger().directUrl());
+
         var handler = this.hookHandler;
         if (handler == null) {
             log.error("A scribble.pub delivery arrived but no handler is registered");
@@ -199,27 +228,73 @@ public final class ScribblePubBot {
      */
     public void registerWebhook(String url) {
         var payload = new RegisterWebhookPayload(requireHttpUrl(url));
-        var request = HttpRequest.newBuilder(URI.create(baseUrl + REGISTER_WEBHOOK_PATH))
+        post("register the webhook", baseUrl + REGISTER_WEBHOOK_PATH, payload);
+        log.info("Registered the scribble.pub webhook URL {}", url);
+    }
+
+    /**
+     * Sends actions, such as new chat messages, into {@code room} outside of a hook reply — the way
+     * to answer once the ~10s reply deadline in {@link #handleHook} has already passed.
+     *
+     * <p>Uses {@link #roomInstanceMap} to reach the instance that actually hosts the room, avoiding
+     * an extra redirect when one is already known — from a prior {@link #handleHook} delivery, from
+     * the platform's default instances, or from a redirect this method itself already followed. That
+     * map is updated with whichever instance served the request.
+     *
+     * @throws IllegalArgumentException when {@code room} is blank or {@code actions} is invalid
+     * @throws ScribblePubApiError      when the platform answers non-2xx
+     */
+    public void sendActions(String room, List<Action> actions) {
+        if (room == null || room.isBlank()) {
+            throw new IllegalArgumentException("A room is required");
+        }
+        if (actions == null || actions.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalArgumentException("actions must be a list with no null entries");
+        }
+
+        var key = room.trim().toLowerCase(Locale.ROOT);
+        var origin = roomInstanceMap.getOrDefault(key, baseUrl);
+        var path = "/api/v0/room/" + encodePathSegment(room) + "/actions";
+
+        var response = post("send actions", origin + path, new HookResponse(actions));
+
+        var servedBy = originOf(response.uri());
+        if (!servedBy.equalsIgnoreCase(origin)) {
+            roomInstanceMap.put(key, servedBy);
+        }
+    }
+
+    /** Issues an authenticated POST, turning any non-2xx answer into a {@link ScribblePubApiError}. */
+    private HttpResponse<String> post(String operation, String url, Object body) {
+        var request = HttpRequest.newBuilder(URI.create(url))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .timeout(requestTimeout)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(json.write(payload)))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(json.write(body)))
                 .build();
 
         HttpResponse<String> response;
         try {
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException exception) {
-            throw new UncheckedIOException("Could not reach " + baseUrl + " to register the webhook", exception);
+            throw new UncheckedIOException("Could not reach " + url + " to " + operation, exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while registering the scribble.pub webhook", exception);
+            throw new IllegalStateException("Interrupted while trying to " + operation, exception);
         }
         if (response.statusCode() / 100 != 2) {
             throw new ScribblePubApiError(response.statusCode(), response.body());
         }
-        log.info("Registered the scribble.pub webhook URL {}", url);
+        return response;
+    }
+
+    private static String originOf(URI uri) {
+        return uri.getScheme() + "://" + uri.getAuthority();
+    }
+
+    private static String encodePathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     // ---------------------------------------------------------------- accessors
@@ -304,7 +379,7 @@ public final class ScribblePubBot {
             return this;
         }
 
-        /** Only used by {@link #registerWebhook(String)}; inbound handling makes no HTTP calls. */
+        /** Only used by {@link #registerWebhook(String)} and {@link #sendActions}; inbound handling makes no HTTP calls. */
         public Builder httpClient(HttpClient httpClient) {
             this.httpClient = httpClient;
             return this;

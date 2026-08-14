@@ -16,7 +16,8 @@ class ScribblePubBotTest {
     private static final String TOKEN = "test-secret-token";
     private static final String MENTION = """
             {"trigger":{"trigger":"chat.mention","text":"@mary hello","room":"Main",\
-            "timestamp":1779999999999,"username":"TheBestArtist"}}""";
+            "timestamp":1779999999999,"username":"TheBestArtist",\
+            "directUrl":"https://eu.scribble.pub"}}""";
 
     private final ScribblePubBot bot = ScribblePubBot.builder()
             .token(TOKEN)
@@ -118,6 +119,8 @@ class ScribblePubBotTest {
         assertThat(deliver("{\"event\":\"message\"}").status()).isEqualTo(400);
         assertThat(deliver(MENTION.replace("chat.mention", "chat.something")).status()).isEqualTo(400);
         assertThat(deliver(MENTION.replace("\"username\":\"TheBestArtist\"", "\"username\":null")).status())
+                .isEqualTo(400);
+        assertThat(deliver(MENTION.replace(",\"directUrl\":\"https://eu.scribble.pub\"", "")).status())
                 .isEqualTo(400);
     }
 

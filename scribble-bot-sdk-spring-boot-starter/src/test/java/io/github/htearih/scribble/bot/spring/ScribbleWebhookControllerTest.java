@@ -15,7 +15,8 @@ class ScribbleWebhookControllerTest {
     private static final String PATH = "/webhook";
     private static final String MENTION = """
             {"trigger":{"trigger":"chat.mention","text":"@mary hello","room":"main",\
-            "timestamp":1779999999999,"username":"TheBestArtist"}}""";
+            "timestamp":1779999999999,"username":"TheBestArtist",\
+            "directUrl":"https://eu.scribble.pub"}}""";
 
     private ScribblePubBot bot;
     private ScribbleProperties properties;

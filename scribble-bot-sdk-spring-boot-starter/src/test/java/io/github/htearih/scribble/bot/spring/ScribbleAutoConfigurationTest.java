@@ -24,7 +24,8 @@ class ScribbleAutoConfigurationTest {
 
     private static final String MENTION = """
             {"trigger":{"trigger":"chat.mention","text":"@mary hello","room":"Main",\
-            "timestamp":1779999999999,"username":"TheBestArtist"}}""";
+            "timestamp":1779999999999,"username":"TheBestArtist",\
+            "directUrl":"https://eu.scribble.pub"}}""";
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ScribbleAutoConfiguration.class));
