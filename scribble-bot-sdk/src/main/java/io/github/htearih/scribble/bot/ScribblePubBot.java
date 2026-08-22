@@ -4,8 +4,12 @@ import io.github.htearih.scribble.bot.json.Json;
 import io.github.htearih.scribble.bot.model.Action;
 import io.github.htearih.scribble.bot.model.HookRequest;
 import io.github.htearih.scribble.bot.model.HookResponse;
+import io.github.htearih.scribble.bot.model.LogoImage;
 import io.github.htearih.scribble.bot.model.RegisterWebhookPayload;
+import io.github.htearih.scribble.bot.model.RoomPreviewImage;
+import io.github.htearih.scribble.bot.model.RoomStateResponse;
 import io.github.htearih.scribble.bot.security.WebhookSignature;
+import io.github.htearih.scribble.bot.state.RoomState;
 import io.github.htearih.scribble.bot.text.Mentions;
 import io.github.htearih.scribble.bot.text.PlainText;
 import java.io.IOException;
@@ -262,6 +266,209 @@ public final class ScribblePubBot {
         if (!servedBy.equalsIgnoreCase(origin)) {
             roomInstanceMap.put(key, servedBy);
         }
+    }
+
+    /**
+     * Gets the state of a room as a list of messages that can be used to restore the state.
+     *
+     * <p>Currently, this only returns the currently visible static snapshot of the room, omitting
+     * full animation timelines. For most layers, this means only the first frame is returned. For
+     * layers in "Roll" mode, the currently rolled frame is returned instead. Future versions of
+     * the API are going to provide the full state.
+     *
+     * @throws IllegalArgumentException when {@code room} is blank
+     * @throws ScribblePubApiError      when the platform answers non-2xx
+     */
+    public RoomStateResponse getRoomStateMessages(String room) {
+        return getRoomStateMessages(room, Map.of());
+    }
+
+    /**
+     * Gets the state of a room as a list of messages that can be used to restore the state.
+     *
+     * @param room    The ID of the room.
+     * @param options Optional parameters for fetching messages
+     * @throws IllegalArgumentException when {@code room} is blank
+     * @throws ScribblePubApiError      when the platform answers non-2xx
+     */
+    public RoomStateResponse getRoomStateMessages(String room, Map<String, String> options) {
+        var key = room.trim().toLowerCase(Locale.ROOT);
+        if (key.isBlank()) {
+            throw new IllegalArgumentException("A room is required");
+        }
+
+        var origin = roomInstanceMap.getOrDefault(key, baseUrl);
+        var path = "/api/v0/room/" + encodePathSegment(room) + "/state";
+        var url = origin + path;
+
+        var response = get("get room messages", url);
+        var servedBy = originOf(response.uri());
+        if (!servedBy.equalsIgnoreCase(origin)) {
+            roomInstanceMap.put(key, servedBy);
+        }
+
+        return json.read(response.body().getBytes(StandardCharsets.UTF_8), RoomStateResponse.class);
+    }
+
+    /**
+     * Fetches the room state and reduces it into a {@link RoomState}.
+     *
+     * @param room The ID of the room.
+     * @throws IllegalArgumentException when {@code room} is blank
+     * @throws ScribblePubApiError      when the platform answers non-2xx
+     */
+    public RoomState getRoomState(String room) {
+        var response = getRoomStateMessages(room);
+        return RoomState.fromMessages(response.messages());
+    }
+
+    /**
+     * Fetches a low-res (600x420) raster preview of the room.
+     *
+     * <p>Keep the returned {@code lastModified} and pass it back as {@code ifModifiedSince} on
+     * the next call to skip re-downloading a preview if nobody has changed it since.
+     *
+     * @param room The ID of the room.
+     * @return The PNG image and its {@code Last-Modified} date, or {@code null} if it was not
+     *     modified (304).
+     * @throws IllegalArgumentException when {@code room} is blank
+     * @throws ScribblePubApiError      when the platform answers non-2xx
+     */
+    public RoomPreviewImage getRoomPreviewImage(String room) {
+        return getRoomPreviewImage(room, Map.of());
+    }
+
+    /**
+     * Fetches a low-res (600x420) raster preview of the room.
+     *
+     * @param room    The ID of the room.
+     * @param options Optional parameters (e.g., {@code {"ifModifiedSince": "Mon, 17 Aug 2026
+     *     13:43:50 GMT"}}).
+     * @return The PNG image and its {@code Last-Modified} date, or {@code null} if it was not
+     *     modified (304).
+     * @throws IllegalArgumentException when {@code room} is blank
+     * @throws ScribblePubApiError      when the platform answers non-2xx
+     */
+    public RoomPreviewImage getRoomPreviewImage(String room, Map<String, String> options) {
+        var key = room.trim().toLowerCase(Locale.ROOT);
+        if (key.isBlank()) {
+            throw new IllegalArgumentException("A room is required");
+        }
+
+        var origin = roomInstanceMap.getOrDefault(key, baseUrl);
+        var path = "/api/v0/room/" + encodePathSegment(room) + "/preview";
+        var url = origin + path;
+
+        var request = HttpRequest.newBuilder(URI.create(url))
+                .header("Authorization", "Bearer " + token)
+                .timeout(requestTimeout)
+                .GET()
+                .build();
+
+        HttpResponse<byte[]> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not reach " + url + " to get room preview", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while trying to get room preview", exception);
+        }
+
+        if (response.statusCode() == 304) {
+            return null;
+        }
+
+        if (response.statusCode() / 100 != 2) {
+            throw new ScribblePubApiError(response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+        }
+
+        var servedBy = originOf(response.uri());
+        if (!servedBy.equalsIgnoreCase(origin)) {
+            roomInstanceMap.put(key, servedBy);
+        }
+
+        return new RoomPreviewImage(response.body(), response.headers().firstValue("last-modified").orElse(null));
+    }
+
+    /**
+     * Fetches the site logo, drawn by the community pixel by pixel.
+     *
+     * <p>It arrives masked to the letter shapes, so everything around them is transparent, ready
+     * to be drawn over whatever your bot is drawing. Take its dimensions from the image itself
+     * and don't hardcode them since the logo can be resized in the future.
+     *
+     * <p>Keep the returned {@code etag} and pass it back as {@code ifNoneMatch} on the next call
+     * to skip re-downloading the logo if nobody has drawn there since.
+     *
+     * @return The PNG and its {@code ETag}, or {@code null} if it was not modified (304).
+     * @throws ScribblePubApiError when the platform answers non-2xx
+     */
+    public LogoImage getLogoImage() {
+        return getLogoImage(Map.of());
+    }
+
+    /**
+     * Fetches the site logo, drawn by the community pixel by pixel.
+     *
+     * @param options Optional parameters (e.g., {@code {"theme": "dark", "ifNoneMatch": etag}}).
+     * @return The PNG and its {@code ETag}, or {@code null} if it was not modified (304).
+     * @throws ScribblePubApiError when the platform answers non-2xx
+     */
+    public LogoImage getLogoImage(Map<String, String> options) {
+        var url = baseUrl + "/api/v0/logo";
+
+        var request = HttpRequest.newBuilder(URI.create(url))
+                .header("Accept", "image/png")
+                .timeout(requestTimeout)
+                .GET()
+                .build();
+
+        HttpResponse<byte[]> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not reach " + url + " to get logo", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while trying to get logo", exception);
+        }
+
+        if (response.statusCode() == 304) {
+            return null;
+        }
+
+        if (response.statusCode() / 100 != 2) {
+            throw new ScribblePubApiError(response.statusCode(), new String(response.body(), StandardCharsets.UTF_8));
+        }
+
+        return new LogoImage(response.body(), response.headers().firstValue("etag").orElse(null));
+    }
+
+    /** Issues an authenticated GET, turning any non-2xx answer into a {@link ScribblePubApiError}. */
+    private HttpResponse<String> get(String operation, String url) {
+        var request = HttpRequest.newBuilder(URI.create(url))
+                .header("Authorization", "Bearer " + token)
+                .header("Accept", "application/json")
+                .timeout(requestTimeout)
+                .GET()
+                .build();
+
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException exception) {
+            throw new UncheckedIOException("Could not reach " + url + " to " + operation, exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while trying to " + operation, exception);
+        }
+
+        if (response.statusCode() / 100 != 2) {
+            throw new ScribblePubApiError(response.statusCode(), response.body());
+        }
+
+        return response;
     }
 
     /** Issues an authenticated POST, turning any non-2xx answer into a {@link ScribblePubApiError}. */
