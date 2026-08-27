@@ -13,10 +13,10 @@ class ScribbleWebhookControllerTest {
 
     private static final String TOKEN = "test-secret-token";
     private static final String PATH = "/webhook";
-    private static final String MENTION = """
-            {"trigger":{"trigger":"chat.mention","text":"@mary hello","room":"main",\
-            "timestamp":1779999999999,"username":"TheBestArtist",\
-            "directUrl":"https://eu.scribble.pub"}}""";
+    private static final String ADDRESSED = """
+            {"trigger":{"type":"chat.addressed","text":"@mary hello","room":"main",\
+            "timestamp":1779999999,"username":"TheBestArtist","userId":"u1a2b3c4d5",\
+            "messageId":42,"directUrl":"https://eu.scribble.pub"}}""";
 
     private ScribblePubBot bot;
     private ScribbleProperties properties;
@@ -35,25 +35,25 @@ class ScribbleWebhookControllerTest {
     }
 
     @Test
-    void answersAMentionWithASingleAddMessageAction() {
-        bot.onMention(mention -> "hi there");
+    void answersAnAddressedMessageWithASingleChatAddMessageAction() {
+        bot.onAddressed(addressed -> "hi there");
 
-        post(MENTION)
+        post(ADDRESSED)
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.actions.length()").isEqualTo(1)
-                .jsonPath("$.actions[0].type").isEqualTo("addMessage")
+                .jsonPath("$.actions[0].type").isEqualTo("chat.addMessage")
                 .jsonPath("$.actions[0].text").isEqualTo("hi there");
     }
 
     @Test
     void rejectsAnInvalidSignature() {
-        bot.onMention(mention -> "hi there");
+        bot.onAddressed(addressed -> "hi there");
 
         client.post().uri(PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(WebhookSignature.HEADER, "sha256=invalid-signature-here")
-                .bodyValue(MENTION)
+                .bodyValue(ADDRESSED)
                 .exchange()
                 .expectStatus().isUnauthorized()
                 .expectBody().jsonPath("$.error").isEqualTo("invalid signature");
@@ -63,14 +63,14 @@ class ScribbleWebhookControllerTest {
     void rejectsAMissingSignature() {
         client.post().uri(PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(MENTION)
+                .bodyValue(ADDRESSED)
                 .exchange()
                 .expectStatus().isUnauthorized();
     }
 
     @Test
     void rejectsMalformedJson() {
-        bot.onMention(mention -> "hi there");
+        bot.onAddressed(addressed -> "hi there");
 
         post("{not valid json")
                 .expectStatus().isBadRequest()
@@ -78,8 +78,8 @@ class ScribbleWebhookControllerTest {
     }
 
     @Test
-    void rejectsAPayloadThatIsNotAMention() {
-        bot.onMention(mention -> "hi there");
+    void rejectsAStructurallyBrokenPayload() {
+        bot.onAddressed(addressed -> "hi there");
 
         post("{\"event\":\"message\"}")
                 .expectStatus().isBadRequest()
@@ -88,25 +88,25 @@ class ScribbleWebhookControllerTest {
 
     @Test
     void stillAnswersWhenTheHandlerOverrunsTheTimeout() {
-        bot.onMention(mention -> {
+        bot.onAddressed(addressed -> {
             sleep(Duration.ofSeconds(5));
             return "too late";
         });
 
-        post(MENTION)
+        post(ADDRESSED)
                 .expectStatus().isOk()
                 .expectBody()
-                .jsonPath("$.actions[0].type").isEqualTo("addMessage")
+                .jsonPath("$.actions[0].type").isEqualTo("chat.addMessage")
                 .jsonPath("$.actions[0].text").isEqualTo(properties.getMessages().getTimeout());
     }
 
     @Test
     void answersAFailedHandlerWithAnApologyRatherThanA500() {
-        bot.onMention(mention -> {
+        bot.onAddressed(addressed -> {
             throw new IllegalStateException("all models failed");
         });
 
-        post(MENTION)
+        post(ADDRESSED)
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.actions[0].text").isEqualTo(properties.getMessages().getError());
@@ -115,11 +115,11 @@ class ScribbleWebhookControllerTest {
     @Test
     void surfacesTheFailureWhenAlwaysAnswerIsOff() {
         properties.setAlwaysAnswer(false);
-        bot.onMention(mention -> {
+        bot.onAddressed(addressed -> {
             throw new IllegalStateException("all models failed");
         });
 
-        post(MENTION).expectStatus().is5xxServerError();
+        post(ADDRESSED).expectStatus().is5xxServerError();
     }
 
     private WebTestClient.ResponseSpec post(String body) {

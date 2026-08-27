@@ -1,7 +1,8 @@
 package io.github.htearih.scribble.bot.spring;
 
+import io.github.htearih.scribble.bot.AddressedHandler;
+import io.github.htearih.scribble.bot.ChatAddressedHandler;
 import io.github.htearih.scribble.bot.HookHandler;
-import io.github.htearih.scribble.bot.MentionHandler;
 import io.github.htearih.scribble.bot.ScribblePubBot;
 import io.github.htearih.scribble.bot.json.Json;
 import org.slf4j.Logger;
@@ -22,9 +23,20 @@ import tools.jackson.databind.ObjectMapper;
  * <p>Everything is conditional on {@code scribble.enabled=true}, so the starter can sit on the
  * classpath of an application that only sometimes talks to scribble.pub.
  *
- * <p>Supply exactly one handler bean — a {@link MentionHandler} (the usual case) or a
- * {@link HookHandler} when you need to return something other than a single message. A
- * {@code HookHandler} wins if both are present.
+ * <p>Supply a handler bean — one of:
+ *
+ * <ul>
+ *   <li>{@link AddressedHandler} — the usual case: a message addressed to the bot in, one line of
+ *       text back.
+ *   <li>{@link ChatAddressedHandler} — the same trigger with everything on it, for answering in
+ *       thread, quoting, or posting more than one message. Wins over an {@code AddressedHandler}
+ *       when both are defined.
+ *   <li>{@link HookHandler} — the catch-all, for triggers no specific handler claimed. It composes
+ *       with the two above rather than replacing them, so a bot can answer chat messages and still
+ *       see whatever else arrives.
+ * </ul>
+ *
+ * <p>With none of them defined, deliveries are answered with HTTP 501.
  */
 @AutoConfiguration
 @ConditionalOnProperty(prefix = "scribble", name = "enabled", havingValue = "true")
@@ -46,13 +58,15 @@ public class ScribbleAutoConfiguration {
             ScribbleTokenProvider tokenProvider,
             ObjectProvider<ObjectMapper> objectMappers,
             ObjectProvider<HookHandler> hookHandlers,
-            ObjectProvider<MentionHandler> mentionHandlers) {
+            ObjectProvider<ChatAddressedHandler> chatAddressedHandlers,
+            ObjectProvider<AddressedHandler> addressedHandlers) {
 
         var builder = ScribblePubBot.builder()
                 .token(tokenProvider.getToken())
                 .baseUrl(properties.getBaseUrl())
                 .handle(properties.getHandle())
-                .maxMessageLength(properties.getMaxMessageLength());
+                .maxMessageLength(properties.getMaxMessageLength())
+                .replyInThread(properties.isReplyInThread());
         // Reuse the application's Jackson configuration when there is one, so a customised mapper
         // does not quietly diverge from the one reading the webhook body.
         var mapper = objectMappers.getIfAvailable();
@@ -62,16 +76,19 @@ public class ScribbleAutoConfiguration {
         var bot = builder.build();
 
         var hookHandler = hookHandlers.getIfAvailable();
+        var chatAddressedHandler = chatAddressedHandlers.getIfAvailable();
+        var addressedHandler = addressedHandlers.getIfAvailable();
         if (hookHandler != null) {
             bot.onHook(hookHandler);
-        } else {
-            var mentionHandler = mentionHandlers.getIfAvailable();
-            if (mentionHandler != null) {
-                bot.onMention(mentionHandler);
-            } else {
-                log.warn("scribble.enabled=true but no MentionHandler or HookHandler bean is defined;"
-                        + " deliveries will be answered with HTTP 501");
-            }
+        }
+        if (chatAddressedHandler != null) {
+            bot.onChatAddressed(chatAddressedHandler);
+        } else if (addressedHandler != null) {
+            bot.onAddressed(addressedHandler);
+        }
+        if (hookHandler == null && chatAddressedHandler == null && addressedHandler == null) {
+            log.warn("scribble.enabled=true but no AddressedHandler, ChatAddressedHandler or HookHandler bean"
+                    + " is defined; deliveries will be answered with HTTP 501");
         }
         return bot;
     }

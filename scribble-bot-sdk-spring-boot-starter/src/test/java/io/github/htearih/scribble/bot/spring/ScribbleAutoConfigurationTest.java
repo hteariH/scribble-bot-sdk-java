@@ -3,10 +3,12 @@ package io.github.htearih.scribble.bot.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.github.htearih.scribble.bot.HookHandler;
-import io.github.htearih.scribble.bot.MentionHandler;
+import io.github.htearih.scribble.bot.AddressedHandler;
+import io.github.htearih.scribble.bot.ChatAddressedHandler;
 import io.github.htearih.scribble.bot.ScribblePubBot;
 import io.github.htearih.scribble.bot.model.Action;
 import io.github.htearih.scribble.bot.model.AddMessage;
+import io.github.htearih.scribble.bot.model.OutboundReplyTarget;
 import io.github.htearih.scribble.bot.model.HookResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -22,10 +24,10 @@ import org.springframework.context.annotation.Configuration;
 
 class ScribbleAutoConfigurationTest {
 
-    private static final String MENTION = """
-            {"trigger":{"trigger":"chat.mention","text":"@mary hello","room":"Main",\
-            "timestamp":1779999999999,"username":"TheBestArtist",\
-            "directUrl":"https://eu.scribble.pub"}}""";
+    private static final String ADDRESSED = """
+            {"trigger":{"type":"chat.addressed","text":"@mary hello","room":"Main",\
+            "timestamp":1779999999,"username":"TheBestArtist","userId":"u1a2b3c4d5",\
+            "messageId":42,"directUrl":"https://eu.scribble.pub"}}""";
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ScribbleAutoConfiguration.class));
@@ -71,8 +73,8 @@ class ScribbleAutoConfigurationTest {
     }
 
     @Test
-    void aMentionHandlerBeanIsWiredIntoTheBot() {
-        enabled().withUserConfiguration(Mentions.class).run(context -> {
+    void anAddressedHandlerBeanIsWiredIntoTheBot() {
+        enabled().withUserConfiguration(Addressed.class).run(context -> {
             var result = deliver(context.getBean(ScribblePubBot.class));
 
             assertThat(result.status()).isEqualTo(200);
@@ -83,12 +85,37 @@ class ScribbleAutoConfigurationTest {
     }
 
     @Test
-    void aHookHandlerBeanWinsOverAMentionHandler() {
-        enabled().withUserConfiguration(Mentions.class, Hooks.class).run(context -> {
+    void aChatAddressedHandlerBeanWinsOverAnAddressedHandler() {
+        enabled().withUserConfiguration(Addressed.class, ChatAddressed.class).run(context -> {
             var result = deliver(context.getBean(ScribblePubBot.class));
 
             assertThat(((HookResponse) result.body()).actions()).containsExactly(new AddMessage("low level"));
         });
+    }
+
+    @Test
+    void aCatchAllHookHandlerComposesWithTheChatHandlerRatherThanReplacingIt() {
+        enabled().withUserConfiguration(Addressed.class, Hooks.class).run(context -> {
+            var result = deliver(context.getBean(ScribblePubBot.class));
+
+            // chat.addressed still goes to the specific handler; "hook" only catches what is left.
+            assertThat(((HookResponse) result.body()).actions())
+                    .containsExactly(new AddMessage("you said: hello"));
+        });
+    }
+
+    @Test
+    void replyInThreadTurnsTheAnswerIntoAReply() {
+        enabled().withUserConfiguration(Addressed.class)
+                .withPropertyValues("scribble.reply-in-thread=true")
+                .run(context -> {
+                    var bot = context.getBean(ScribblePubBot.class);
+                    assertThat(bot.replyInThread()).isTrue();
+
+                    var actions = ((HookResponse) deliver(bot).body()).actions();
+                    assertThat(((AddMessage) actions.get(0)).replyTo())
+                            .isEqualTo(OutboundReplyTarget.to(42));
+                });
     }
 
     @Test
@@ -114,6 +141,7 @@ class ScribbleAutoConfigurationTest {
                     assertThat(bot.baseUrl()).isEqualTo("http://localhost:3000");
                     assertThat(bot.handle()).isEqualTo("mary");
                     assertThat(bot.maxMessageLength()).isEqualTo(17);
+                    assertThat(bot.replyInThread()).isFalse();
                 });
     }
 
@@ -123,16 +151,25 @@ class ScribbleAutoConfigurationTest {
     }
 
     private static io.github.htearih.scribble.bot.HookResult deliver(ScribblePubBot bot) {
-        var body = MENTION.getBytes(StandardCharsets.UTF_8);
+        var body = ADDRESSED.getBytes(StandardCharsets.UTF_8);
         return bot.handleHook(body, bot.signature().sign(body));
     }
 
     @Configuration(proxyBeanMethods = false)
-    static class Mentions {
+    static class Addressed {
 
         @Bean
-        MentionHandler mentionHandler() {
-            return mention -> "you said: " + mention.text();
+        AddressedHandler addressedHandler() {
+            return addressed -> "you said: " + addressed.text();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ChatAddressed {
+
+        @Bean
+        ChatAddressedHandler chatAddressedHandler() {
+            return trigger -> List.<Action>of(Action.addMessage("low level"));
         }
     }
 
@@ -141,7 +178,7 @@ class ScribbleAutoConfigurationTest {
 
         @Bean
         HookHandler hookHandler() {
-            return request -> List.<Action>of(Action.addMessage("low level"));
+            return trigger -> List.<Action>of(Action.addMessage("catch-all"));
         }
     }
 }

@@ -16,9 +16,11 @@ import org.junit.jupiter.api.Test;
 class WebhookSignatureTest {
 
     private static final String TOKEN = "test-secret-token";
+    // Only ever hashed, never parsed — the HMAC covers bytes and knows nothing about the schema.
+    // Kept current anyway, so nobody reads it as the wire format and copies it.
     private static final String PAYLOAD = """
-            {"trigger":{"trigger":"chat.mention","text":"@TestBot hello","room":"main",\
-            "timestamp":1779999999999,"username":"TheBestArtist"}}""";
+            {"trigger":{"type":"chat.addressed","text":"@TestBot hello","room":"main",\
+            "timestamp":1779999999,"username":"TheBestArtist","userId":"u1a2b3c4d5","messageId":42}}""";
 
     private final WebhookSignature signature = WebhookSignature.of(TOKEN);
 
