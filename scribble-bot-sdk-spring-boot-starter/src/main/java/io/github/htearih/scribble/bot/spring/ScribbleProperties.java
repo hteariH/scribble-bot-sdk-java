@@ -39,6 +39,13 @@ public class ScribbleProperties {
     private int maxMessageLength = 2000;
 
     /**
+     * Answer as a reply to the message that addressed the bot, keeping the exchange in one thread,
+     * rather than posting a standalone message. Only affects an {@code AddressedHandler}; a
+     * {@code ChatAddressedHandler} decides per message.
+     */
+    private boolean replyInThread = false;
+
+    /**
      * Answer a failed handler with {@link Messages#getError()} and HTTP 200 instead of a 500. There
      * is no outbound API to apologise on later, so by default the room still gets a line.
      */
@@ -142,6 +149,14 @@ public class ScribbleProperties {
 
     public void setMaxMessageLength(int maxMessageLength) {
         this.maxMessageLength = maxMessageLength;
+    }
+
+    public boolean isReplyInThread() {
+        return replyInThread;
+    }
+
+    public void setReplyInThread(boolean replyInThread) {
+        this.replyInThread = replyInThread;
     }
 
     public boolean isAlwaysAnswer() {

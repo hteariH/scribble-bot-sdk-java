@@ -21,9 +21,10 @@ import org.junit.jupiter.api.Test;
 class SendActionsTest {
 
     private static final String TOKEN = "test-secret-token";
-    private static final String MENTION = """
-            {"trigger":{"trigger":"chat.mention","text":"@mary hi","room":"Main",\
-            "timestamp":1779999999999,"username":"you","directUrl":"%s"}}""";
+    private static final String ADDRESSED = """
+            {"trigger":{"type":"chat.addressed","text":"@mary hi","room":"Main",\
+            "timestamp":1779999999,"username":"you","userId":"u1a2b3c4d5","messageId":42,\
+            "directUrl":"%s"}}""";
 
     private HttpServer serverA;
     private HttpServer serverB;
@@ -51,7 +52,7 @@ class SendActionsTest {
         assertThat(exchange.getRequestURI().getPath()).isEqualTo("/api/v0/room/main/actions");
         assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer " + TOKEN);
         assertThat(exchange.getRequestHeaders().getFirst("Content-Type")).isEqualTo("application/json");
-        assertThat(lastBody.get()).isEqualTo("{\"actions\":[{\"type\":\"addMessage\",\"text\":\"hi there\"}]}");
+        assertThat(lastBody.get()).isEqualTo("{\"actions\":[{\"type\":\"chat.addMessage\",\"text\":\"hi there\"}]}");
     }
 
     @Test
@@ -101,8 +102,8 @@ class SendActionsTest {
         // An unreachable base URL proves the call never falls back to it: everything must be routed
         // to the instance learned from the hook delivery below.
         var bot = bot("http://127.0.0.1:1");
-        var mentionBody = MENTION.formatted(url(serverB)).getBytes(StandardCharsets.UTF_8);
-        bot.handleHook(mentionBody, bot.signature().sign(mentionBody));
+        var delivery = ADDRESSED.formatted(url(serverB)).getBytes(StandardCharsets.UTF_8);
+        bot.handleHook(delivery, bot.signature().sign(delivery));
 
         bot.sendActions("main", List.of(Action.addMessage("hi")));
 
