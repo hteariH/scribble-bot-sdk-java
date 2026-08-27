@@ -30,9 +30,9 @@ Java 17+.
 Gradle (Kotlin DSL):
 
 ```kotlin
-implementation("io.github.htearih.scribble:scribble-bot-sdk-spring-boot-starter:0.2.0")
+implementation("io.github.htearih.scribble:scribble-bot-sdk-spring-boot-starter:0.4.0")
 // or, without Spring:
-implementation("io.github.htearih.scribble:scribble-bot-sdk:0.2.0")
+implementation("io.github.htearih.scribble:scribble-bot-sdk:0.4.0")
 ```
 
 Maven:
@@ -41,13 +41,13 @@ Maven:
 <dependency>
     <groupId>io.github.htearih.scribble</groupId>
     <artifactId>scribble-bot-sdk-spring-boot-starter</artifactId>
-    <version>0.2.0</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
-`0.2.0` is the current release. The `0.4.0` described below tracks upstream's *unreleased*
-`0.4.0-SNAPSHOT` and is published only as a snapshot — the wire contract can still move before
-upstream tags it.
+`0.4.0` is the current release. It tracks upstream's `0.4.0` **ahead of upstream tagging it** — the
+port was read off their `main`, whose changelog still calls the release "in progress". If upstream's
+0.4.0 ships differing from this, the difference lands as a `0.4.1`.
 
 ## What the Bot API is
 
