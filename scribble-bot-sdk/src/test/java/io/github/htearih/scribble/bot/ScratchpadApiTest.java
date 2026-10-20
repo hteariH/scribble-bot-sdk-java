@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import io.github.htearih.scribble.bot.model.AnimationMode;
 import io.github.htearih.scribble.bot.model.ScratchpadLayerMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadObjectMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadSessionMetaMessage;
@@ -37,6 +38,20 @@ class ScratchpadApiTest {
             {"type":"sp.object","objectId":5,"frameId":100,"eventId":12,"objectType":"line.floats",\
             "rgba":16711935,"lineWidth":2.5,"points":[1.0,2.0,3.0,4.0]},\
             {"type":"sp.brandNewThing","whatever":true},\
+            {"type":"sp.lastEventId","lastEventId":42}]}""";
+
+    private static final String ANIMATED_STATE_BODY =
+            """
+            {"messages":[\
+            {"type":"sp.sessionMeta","currentSession":3,"eventId":10,"seqId":167,"canvasWidth":1000,"canvasHeight":700,\
+            "animationTickMs":125},\
+            {"type":"sp.layer","layerId":7,"frames":[100,101,100],"animationMode":"roll","lastEventId":11,\
+            "localId":1,"frameIdsByLocalId":{"5":100,"6":101}},\
+            {"type":"sp.layer","layerId":8,"frames":[200],"animationMode":"bounce","lastEventId":12},\
+            {"type":"sp.layerOrder","order":[7,8],"lastEventId":-1},\
+            {"type":"sp.roll","roll":0.75,"lastEventId":-1},\
+            {"type":"sp.object","objectId":5,"frameId":101,"eventId":13,"objectType":"line.floats",\
+            "rgba":4278190335,"lineWidth":2.5,"points":[1.0,2.0],"localId":9},\
             {"type":"sp.lastEventId","lastEventId":42}]}""";
 
     private HttpServer server;
@@ -200,6 +215,27 @@ class ScratchpadApiTest {
                 .isInstanceOf(ScribblePubValidationError.class);
         assertThatThrownBy(() -> bot.getScratchpadPreviewImage(null))
                 .isInstanceOf(ScribblePubValidationError.class);
+    }
+
+    @Test
+    void readsAnimationsAndTheBotsOwnLocalIds() throws IOException {
+        server = respondWith(
+                new AtomicReference<>(), 200, ANIMATED_STATE_BODY.getBytes(StandardCharsets.UTF_8), "application/json");
+
+        var state = bot().getScratchpadState("Main");
+
+        assertThat(state.sessionMeta().animationTickMs()).isEqualTo(125);
+        assertThat(state.roll()).isEqualTo(0.75);
+        assertThat(state.layers().get(7L).animationMode()).isEqualTo(AnimationMode.ROLL);
+        assertThat(state.layers().get(7L).frames()).containsExactly(100L, 101L, 100L);
+        // A mode this version does not know reads as null rather than failing the fetch.
+        assertThat(state.layers().get(8L).animationMode()).isNull();
+        assertThat(state.ownLayers()).containsOnlyKeys(1L);
+        assertThat(state.ownFrames().get(6L).frameId()).isEqualTo(101L);
+        // Roll 0.75 over three ticks picks the third: frame 100 again.
+        assertThat(state.visibleFrameId(7)).isEqualTo(100L);
+        // Opaque red is past Integer.MAX_VALUE on the wire, and arrives as the same bits.
+        assertThat(state.ownObjects().get(9L).rgba()).isEqualTo(0xff0000ff);
     }
 
     private ScribblePubBot bot() {

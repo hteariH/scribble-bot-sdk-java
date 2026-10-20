@@ -2,14 +2,17 @@ package io.github.htearih.scribble.bot.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.htearih.scribble.bot.model.AnimationMode;
 import io.github.htearih.scribble.bot.model.RoomMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadLastEventIdMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadLayerMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadObjectMessage;
+import io.github.htearih.scribble.bot.model.ScratchpadRollMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadSessionMetaMessage;
 import io.github.htearih.scribble.bot.model.ScratchpadSetLayerOrderMessage;
 import io.github.htearih.scribble.bot.model.UnknownRoomMessage;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ScratchpadStateTest {
@@ -139,8 +142,91 @@ class ScratchpadStateTest {
         assertThat(state.sessionMeta()).isNull();
     }
 
+    @Test
+    void indexesTheBotsOwnLayersFramesAndObjectsByTheirLocalIds() {
+        var state = ScratchpadState.fromMessages(List.of(
+                meta(1, 1),
+                layer(0, List.of(0L), 2),
+                ownLayer(10, List.of(100L, 101L, 100L), 3, 1, Map.of(5L, 100L, 6L, 101L)),
+                object(1, 0, 4),
+                ownObject(2, 100, 5, 7, List.of(1.0, 2.0, 3.0, 4.0))));
+
+        assertThat(state.ownLayers().get(1L).layerId()).isEqualTo(10);
+        assertThat(state.ownLayers().get(1L).frames()).containsExactly(100L, 101L, 100L);
+        assertThat(state.ownFrames().get(5L).frameId()).isEqualTo(100);
+        assertThat(state.ownFrames().get(6L).frameId()).isEqualTo(101);
+        assertThat(state.ownObjects()).containsOnlyKeys(7L);
+
+        // A replacement arrives under the same objectId, in place.
+        state.applyMessage(ownObject(2, 100, 6, 7, List.of(1.0, 2.0)));
+        assertThat(state.ownObjects().get(7L).points()).containsExactly(1.0, 2.0);
+        assertThat(state.frames().get(100L).objects()).hasSize(1);
+
+        // Frame 6 is dropped, and frame 7 comes.
+        state.applyMessage(ownLayer(10, List.of(100L, 102L), 9, 1, Map.of(5L, 100L, 7L, 102L)));
+        assertThat(state.ownFrames()).containsOnlyKeys(5L, 7L);
+
+        state.applyMessage(layer(10, List.of(), 10));
+        assertThat(state.ownLayers()).isEmpty();
+        assertThat(state.ownFrames()).isEmpty();
+        assertThat(state.ownObjects()).isEmpty();
+    }
+
+    @Test
+    void picksTheFrameViewersSeeInEveryAnimationMode() {
+        var state = ScratchpadState.fromMessages(List.of(
+                meta(1, 1),
+                layer(1, List.of(10L, 11L, 10L, 12L), 2),
+                new ScratchpadLayerMessage(null, 2, List.of(20L, 21L), AnimationMode.ROLL, 3, null, null),
+                new ScratchpadLayerMessage(null, 3, List.of(30L, 31L, 32L), AnimationMode.RANDOM, 4, null, null),
+                new ScratchpadRollMessage(null, 0.75, -1)));
+
+        assertThat(state.roll()).isEqualTo(0.75);
+        assertThat(state.frames()).hasSize(8);
+        assertThat(List.of(0, 1, 2, 3, 4).stream().map(tick -> state.visibleFrameId(1, tick * 125L)))
+                .containsExactly(10L, 11L, 10L, 12L, 10L);
+        // The ticks start over every 15 minutes: 7200 ticks, not a multiple of 7.
+        var sevens = ScratchpadState.fromMessages(
+                List.of(meta(1, 1), layer(1, List.of(0L, 1L, 2L, 3L, 4L, 5L, 6L), 2)));
+        assertThat(sevens.visibleFrameId(1, 7200 * 125L)).isEqualTo(0L);
+        // An older drawing plays at 250 ms a frame.
+        var old = ScratchpadState.fromMessages(List.of(
+                new ScratchpadSessionMetaMessage(null, 1, 1, 1, 1000, 700, 250), layer(1, List.of(10L, 11L), 2)));
+        assertThat(List.of(0L, 125L, 250L).stream().map(time -> old.visibleFrameId(1, time)))
+                .containsExactly(10L, 10L, 11L);
+        assertThat(state.visibleFrameId(2)).isEqualTo(21L);
+        assertThat(state.visibleFrameId(3, 0, 0.5)).isEqualTo(31L);
+        assertThat(state.visibleFrameId(404)).isNull();
+    }
+
+    @Test
+    void aNewSessionForgetsTheRollAndTheBotsOwnDrawing() {
+        var state = ScratchpadState.fromMessages(List.of(
+                ownLayer(10, List.of(100L), 1, 1, Map.of(5L, 100L)),
+                ownObject(2, 100, 2, 7, List.of(1.0, 2.0)),
+                new ScratchpadRollMessage(null, 0.5, 3)));
+
+        state.applyMessage(meta(2, 4));
+
+        assertThat(state.roll()).isZero();
+        assertThat(state.ownLayers()).isEmpty();
+        assertThat(state.ownFrames()).isEmpty();
+        assertThat(state.ownObjects()).isEmpty();
+    }
+
+    private static RoomMessage ownLayer(
+            long layerId, List<Long> frames, long lastEventId, long localId, Map<Long, Long> frameIdsByLocalId) {
+        return new ScratchpadLayerMessage(
+                null, layerId, frames, AnimationMode.SEQUENTIAL, lastEventId, localId, frameIdsByLocalId);
+    }
+
+    private static RoomMessage ownObject(long objectId, long frameId, long eventId, long localId, List<Double> points) {
+        return new ScratchpadObjectMessage(
+                null, objectId, frameId, eventId, ScratchpadObjectMessage.LINE_FLOATS, 0xff0000ff, 2.0, points, localId);
+    }
+
     private static RoomMessage meta(long session, long eventId) {
-        return new ScratchpadSessionMetaMessage(null, session, eventId, 1, 1000, 700);
+        return new ScratchpadSessionMetaMessage(null, session, eventId, 1, 1000, 700, 125);
     }
 
     private static RoomMessage layer(long layerId, List<Long> frames, long lastEventId) {

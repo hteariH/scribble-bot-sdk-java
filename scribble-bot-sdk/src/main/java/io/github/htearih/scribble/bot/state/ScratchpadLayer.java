@@ -1,6 +1,8 @@
 package io.github.htearih.scribble.bot.state;
 
+import io.github.htearih.scribble.bot.model.AnimationMode;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A layer in a {@link ScratchpadState}: a top-level rendering z-index holding frames.
@@ -14,12 +16,13 @@ public final class ScratchpadLayer {
 
     private final long layerId;
     private List<Long> frames;
+    private AnimationMode animationMode;
     private long lastEventId;
+    private Long localId;
+    private Map<Long, Long> frameIdsByLocalId;
 
-    ScratchpadLayer(long layerId, List<Long> frames, long lastEventId) {
+    ScratchpadLayer(long layerId) {
         this.layerId = layerId;
-        this.frames = frames;
-        this.lastEventId = lastEventId;
     }
 
     /** A session-scoped identifier for this layer. */
@@ -27,9 +30,20 @@ public final class ScratchpadLayer {
         return layerId;
     }
 
-    /** The IDs of the frames this layer owns. */
+    /**
+     * The frame program of this layer: one frame ID per tick, in the order they are played. Repeated
+     * frames appear several times.
+     */
     public List<Long> frames() {
         return frames;
+    }
+
+    /**
+     * How the layer plays its {@link #frames()}, or {@code null} for a mode this SDK version does
+     * not know, which {@link ScratchpadState#visibleFrameId} plays as sequential.
+     */
+    public AnimationMode animationMode() {
+        return animationMode;
     }
 
     /** The last event that created or modified this layer. */
@@ -37,13 +51,35 @@ public final class ScratchpadLayer {
         return lastEventId;
     }
 
-    void update(List<Long> frames, long lastEventId) {
+    /** The bot's own ID for this layer, or {@code null} unless it is one of the bot's own layers. */
+    public Long localId() {
+        return localId;
+    }
+
+    /**
+     * The global IDs of the layer's frames keyed by the bot's own IDs for them, or {@code null}
+     * unless it is one of the bot's own layers.
+     */
+    public Map<Long, Long> frameIdsByLocalId() {
+        return frameIdsByLocalId;
+    }
+
+    void update(
+            List<Long> frames,
+            AnimationMode animationMode,
+            long lastEventId,
+            Long localId,
+            Map<Long, Long> frameIdsByLocalId) {
         this.frames = frames;
+        this.animationMode = animationMode;
         this.lastEventId = lastEventId;
+        this.localId = localId;
+        this.frameIdsByLocalId = frameIdsByLocalId;
     }
 
     @Override
     public String toString() {
-        return "ScratchpadLayer[layerId=" + layerId + ", frames=" + frames + ", lastEventId=" + lastEventId + "]";
+        return "ScratchpadLayer[layerId=" + layerId + ", frames=" + frames + ", animationMode=" + animationMode
+                + ", lastEventId=" + lastEventId + (localId == null ? "" : ", localId=" + localId) + "]";
     }
 }

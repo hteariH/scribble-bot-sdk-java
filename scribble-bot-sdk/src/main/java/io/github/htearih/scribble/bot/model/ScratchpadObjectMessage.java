@@ -1,14 +1,17 @@
 package io.github.htearih.scribble.bot.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.github.htearih.scribble.bot.json.UnsignedRgba;
 import java.util.List;
+import tools.jackson.databind.annotation.JsonDeserialize;
 
 /**
  * A drawn object on a frame.
  *
  * <p>These arrive in ascending {@link #objectId()} order, which is both the order they were drawn in
  * and the order they render in, so a bot can append them to its local state and draw them straight
- * away without sorting. Expect gaps: erased objects keep their IDs but are never delivered. If the
+ * away without sorting. An object with an {@code objectId} already held replaces that object in
+ * place: bots can replace their own objects. Expect gaps: erased objects keep their IDs but are never delivered. If the
  * frame is unknown, drop the object rather than inventing one — not expected, but defined.
  *
  * <p>The payload is flat: {@link #objectType()} says how to read the fields beside it. Only
@@ -27,6 +30,8 @@ import java.util.List;
  * @param rgba       the colour packed as {@code R << 24 | G << 16 | B << 8 | A} — see {@link #rgba()}
  * @param lineWidth  the stroke width, or {@code 0} for a filled polygon — see {@link #lineWidth()}
  * @param points     a flat array of coordinates {@code [x1, y1, x2, y2, …]} — see {@link #points()}
+ * @param localId    the {@link PutObject#localId()} this bot gave the object, or {@code null} — see
+ *                   {@link #localId()}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ScratchpadObjectMessage(
@@ -35,9 +40,10 @@ public record ScratchpadObjectMessage(
         long frameId,
         long eventId,
         String objectType,
-        Integer rgba,
+        @JsonDeserialize(using = UnsignedRgba.Deserializer.class) Integer rgba,
         Double lineWidth,
-        List<Double> points)
+        List<Double> points,
+        Long localId)
         implements RoomMessage {
 
     /** The wire discriminator for this message. */
@@ -49,6 +55,19 @@ public record ScratchpadObjectMessage(
     public ScratchpadObjectMessage {
         type = type == null ? TYPE : type;
         points = points == null ? List.of() : List.copyOf(points);
+    }
+
+    /** An object no bot claims as its own, i.e. without a {@link #localId()}. */
+    public ScratchpadObjectMessage(
+            String type,
+            long objectId,
+            long frameId,
+            long eventId,
+            String objectType,
+            Integer rgba,
+            Double lineWidth,
+            List<Double> points) {
+        this(type, objectId, frameId, eventId, objectType, rgba, lineWidth, points, null);
     }
 
     /** Whether this object carries a {@value #LINE_FLOATS} payload, i.e. the fields below mean anything. */
@@ -96,6 +115,15 @@ public record ScratchpadObjectMessage(
     @Override
     public List<Double> points() {
         return points;
+    }
+
+    /**
+     * The {@link PutObject#localId()} this bot gave the object. Present only on the bot's own
+     * objects — other bots' local IDs are never shown — which lets a restarted bot find what it drew.
+     */
+    @Override
+    public Long localId() {
+        return localId;
     }
 
     /** Whether this object is the single-point case described in {@link #points()}. */

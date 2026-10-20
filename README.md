@@ -45,16 +45,16 @@ Maven:
 </dependency>
 ```
 
-`0.4.0` is the current release. It tracks upstream's `0.4.0` **ahead of upstream tagging it** — the
-port was read off their `main`, whose changelog still calls the release "in progress". If upstream's
-0.4.0 ships differing from this, the difference lands as a `0.4.1`.
+`0.4.0` is the current release; `0.5.0-SNAPSHOT`, tracking upstream's `0.5.0` (bots can draw), is
+published to Central's snapshot repository until it is released.
 
 ## What the Bot API is
 
 One inbound webhook, plus a few reads. scribble.pub POSTs a `chat.addressed` event when someone
 addresses your bot in a room — by opening a message with its tag, or by replying to one of its
 messages — signed with HMAC-SHA256 in `X-Scribble-Pub-Signature`, and **your reply is the HTTP
-response**: a list of actions, today only `chat.addMessage`.
+response**: a list of actions — `chat.addMessage` to talk, and the `sp.*` actions to
+[draw](#drawing).
 
 Who counts as addressing your bot is the platform's decision, and it is worth knowing:
 
@@ -62,6 +62,10 @@ Who counts as addressing your bot is the platform's decision, and it is worth kn
 - **Tags win over replies.** A reply reaches your bot only when the message opens with no bot tag,
   so replying to you while opening with `@OtherBot` reaches that bot alone.
 - **Bots never trigger bots**, and never themselves.
+- **AI bots can be muted per user.** The platform marks some bots as AI bots (`[AI]` after their
+  name in a drawing's participant list; chat keeps the plain name). Talking to them is a room
+  permission everyone has by default, and a user who lost it to a "No AI Bots" ban sends them no
+  `chat.addressed` at all.
 
 Four consequences the SDK is shaped around:
 
@@ -226,13 +230,18 @@ A room's drawing surface can be read back, as the events that rebuild it or as a
 ```java
 var state = bot.getScratchpadState("main");
 for (var layerId : state.layerOrder()) {                       // bottom to top
-    for (var frameId : state.layers().get(layerId).frames()) {
-        for (var object : state.frames().get(frameId).objects()) {
-            draw(object);                                      // already in render order
-        }
+    var frameId = state.visibleFrameId(layerId);               // the frame viewers see now
+    for (var object : state.frames().get(frameId).objects()) {
+        draw(object);                                          // already in render order
     }
 }
 ```
+
+Layers are animated: `frames()` is a layer's whole frame program, one entry per tick (a repeated
+frame appears several times), and the state holds the objects of every frame. Which one shows depends
+on the layer's `animationMode()` — `SEQUENTIAL` on a clock shared by all viewers, `ROLL` by the room's
+last dice roll (`state.roll()`), `RANDOM` differently for every viewer — and `visibleFrameId` picks it
+the way viewers' apps do, at the session's `animationTickMs`.
 
 `getScratchpadStateMessages` returns the raw `sp.*` messages instead, if you would rather reduce them
 yourself. Colours arrive packed as `R << 24 | G << 16 | B << 8 | A` — **alpha is the lowest byte**,
@@ -250,6 +259,53 @@ var logo = bot.getLogoImage(LogoTheme.DARK, etag);                  // null when
 These are the per-app endpoints upstream introduced in 0.4.0 —
 `/api/v0/room/{room}/scratchpad/state` and `/scratchpad/preview`. The room-wide `/state` and
 `/preview` they replaced are deprecated upstream and were never shipped by this port.
+
+## Drawing
+
+A bot can draw lines on any layer, create layers of its own, animate them with frames, and replace or
+remove what it has drawn. Everything is named by the bot's **own local IDs** (from 1 to
+`Action.MAX_LOCAL_ID`, scoped by the bot and the drawing session), so drawing is fire-and-forget —
+there are no server IDs to wait for:
+
+```java
+var state = bot.getScratchpadState("main");
+bot.sendActions("main", List.of(
+        Action.checkSession(state.sessionMeta().currentSession()),        // nothing, if cleared since
+        new PutLayer(1, List.of(1L, 2L))                                  // my layer 1, frames 1 and 2
+                .at(LayerPosition.below(DefaultLayers.FOREGROUND_LAYER_ID)),
+        PutObject.onOwnFrame(1, 1, 0xff0000ff, 2, List.of(10.0, 10.0, 90.0, 90.0)),
+        PutObject.onFrame(2, DefaultLayers.FOREGROUND_FRAME_ID, 0x0000ffff, 0, triangle)));
+```
+
+| Action | Does |
+| --- | --- |
+| `PutObject` | Draws a line on top of a frame — `onFrame` by its global ID (any layer's, as people can), `onOwnFrame` by the bot's own frame ID — or replaces the bot's object with the same `localId` in place. |
+| `RemoveObject` | Removes the bot's object. |
+| `PutLayer` | Creates the bot's layer with the frame program `frameLocalIds` (new IDs create frames, repeated ones repeat them, missing ones remove them), or replaces the program of an existing one. A new layer goes at `position`, or on top; an existing one keeps its place. |
+| `RemoveLayer` | Removes the bot's layer with its frames and objects. |
+| `CheckSession` | Cancels the request's whole drawing, silently, unless the room is still on that drawing session. Must come before the other `sp.*` actions. |
+
+What the platform guarantees, and what it asks:
+
+- **A request's drawing is atomic.** Its `sp.*` actions apply together, in order, with nothing else in
+  between. A missing target — removing what is gone, drawing on a frame of a removed layer — is
+  skipped, and the rest still applies.
+- **Only the bot's own things can be changed.** Global IDs name anything in the room; local IDs only
+  ever name the bot's own. A frame local ID belongs to one layer of the bot, which `Validation` checks
+  within a request.
+- **Permissions.** Drawing needs the drawing permission in the room, and filled polygons (`lineWidth`
+  0) or lines wider than 2.5 need the fill tool permission; without them the request fails with
+  `403` before anything is drawn. Bot drawing does not count as activity, so it cannot keep a room
+  from being cleared.
+- **Limits.** `lineWidth` 0–100, 1–2000 points per object, up to 256 entries in `frameLocalIds`,
+  and at most `Action.MAX_ACTIONS` (5000) actions and `Action.MAX_PAYLOAD_BYTES` (4 MB) of JSON per
+  request or hook reply — all checked before anything is sent.
+- **Colours go out unsigned.** `rgba` is a Java `int` with the same bits as the wire's unsigned
+  32-bit number, so `0xff0000ff` (opaque red, negative as an `int`) is sent as `4278190335`.
+
+A bot that restarted can find what it drew: `state.ownLayers()`, `state.ownFrames()` and
+`state.ownObjects()` key the bot's own things by its local IDs (other bots' local IDs are never
+shown).
 
 ## Plain text
 
