@@ -30,9 +30,9 @@ Java 17+.
 Gradle (Kotlin DSL):
 
 ```kotlin
-implementation("io.github.htearih.scribble:scribble-bot-sdk-spring-boot-starter:0.4.0")
+implementation("io.github.htearih.scribble:scribble-bot-sdk-spring-boot-starter:0.5.0")
 // or, without Spring:
-implementation("io.github.htearih.scribble:scribble-bot-sdk:0.4.0")
+implementation("io.github.htearih.scribble:scribble-bot-sdk:0.5.0")
 ```
 
 Maven:
@@ -41,12 +41,11 @@ Maven:
 <dependency>
     <groupId>io.github.htearih.scribble</groupId>
     <artifactId>scribble-bot-sdk-spring-boot-starter</artifactId>
-    <version>0.4.0</version>
+    <version>0.5.0</version>
 </dependency>
 ```
 
-`0.4.0` is the current release; `0.5.0-SNAPSHOT`, tracking upstream's `0.5.0` (bots can draw), is
-published to Central's snapshot repository until it is released.
+`0.5.0` is the current release, matching upstream's `0.5.0` — bots can [draw](#drawing).
 
 ## What the Bot API is
 
