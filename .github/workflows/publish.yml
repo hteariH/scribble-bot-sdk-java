@@ -28,6 +28,22 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
 
+      # The version comes from gradle.properties, not the tag, so a release cut before bumping it
+      # would ship whatever main carries — usually a -SNAPSHOT. Fail before anything is published.
+      - name: Check the version is a release, and the tag's
+        run: |
+          VERSION=$(sed -n 's/^version=//p' gradle.properties)
+          echo "version=$VERSION"
+          case "$VERSION" in
+            ''|*-SNAPSHOT) echo "::error::'$VERSION' is not a release version; set it in gradle.properties first"; exit 1 ;;
+          esac
+          if [ -n "$TAG" ] && [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::release tag $TAG does not match version $VERSION in gradle.properties"
+            exit 1
+          fi
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
       - run: ./gradlew build --no-daemon
 
       # GitHub Packages. Public, but consumers still need a token to read it — Maven Central is

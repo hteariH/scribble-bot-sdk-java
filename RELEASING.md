@@ -25,7 +25,8 @@ convenience for this org, not a public distribution channel.
 
 ## Cutting a release
 
-1. Set the release version in `gradle.properties`, commit, tag.
+1. Set the release version in `gradle.properties`, commit, tag it `v<version>` (e.g. `v0.5.0`).
+   `publish.yml` refuses to run on a `-SNAPSHOT` version or a tag that does not match it.
 2. Publish a GitHub release for the tag — `.github/workflows/publish.yml` builds, signs, pushes to
    GitHub Packages and uploads the Central bundle.
 3. The upload lands as `USER_MANAGED`, so it waits in the Portal until you press *Publish*. Change
