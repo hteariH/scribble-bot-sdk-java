@@ -1,5 +1,6 @@
 package io.github.htearih.scribble.bot.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
@@ -64,6 +65,7 @@ public sealed interface Action permits AddMessage, CheckSession, PutLayer, Remov
     }
 
     /** Whether this action draws on the scratchpad, i.e. it is one of the {@code sp.*} actions. */
+    @JsonIgnore
     default boolean isDrawing() {
         return type().startsWith("sp.");
     }

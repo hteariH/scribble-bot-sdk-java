@@ -232,7 +232,8 @@ class ScratchpadApiTest {
         assertThat(state.layers().get(8L).animationMode()).isNull();
         assertThat(state.ownLayers()).containsOnlyKeys(1L);
         assertThat(state.ownFrames().get(6L).frameId()).isEqualTo(101L);
-        assertThat(state.visibleFrameId(7)).isEqualTo(101L);
+        // Roll 0.75 over three ticks picks the third: frame 100 again.
+        assertThat(state.visibleFrameId(7)).isEqualTo(100L);
         // Opaque red is past Integer.MAX_VALUE on the wire, and arrives as the same bits.
         assertThat(state.ownObjects().get(9L).rgba()).isEqualTo(0xff0000ff);
     }

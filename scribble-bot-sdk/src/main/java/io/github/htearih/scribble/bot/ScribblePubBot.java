@@ -280,9 +280,10 @@ public final class ScribblePubBot {
         }
 
         var errors = Validation.actions(actions);
-        var response = new HookResponse(actions);
+        HookResponse response = null;
         if (errors.isEmpty()) {
             // Only once the rest holds: a drawing-heavy reply is worth serialising twice, an invalid one is not.
+            response = new HookResponse(actions);
             errors = Validation.payloadSize(json.write(response).length);
         }
         if (!errors.isEmpty()) {
