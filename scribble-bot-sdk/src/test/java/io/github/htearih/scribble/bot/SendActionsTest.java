@@ -7,6 +7,11 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import io.github.htearih.scribble.bot.model.Action;
+import io.github.htearih.scribble.bot.model.AnimationMode;
+import io.github.htearih.scribble.bot.model.DefaultLayers;
+import io.github.htearih.scribble.bot.model.LayerPosition;
+import io.github.htearih.scribble.bot.model.PutLayer;
+import io.github.htearih.scribble.bot.model.PutObject;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -133,6 +138,55 @@ class SendActionsTest {
         assertThat(hitsA.get()).isEqualTo(1);
         assertThat(hitsB.get()).isEqualTo(2);
         assertThat(lastExchangeB.get().getRequestURI().getPath()).isEqualTo("/api/v0/room/chaos/actions");
+    }
+
+    @Test
+    void sendsDrawingActionsInTheWireFormat() throws IOException {
+        var lastBody = new AtomicReference<String>();
+        serverA = jsonServer(200, "{}", new AtomicReference<>(), lastBody, new AtomicInteger());
+        var line = List.of(10.0, 10.0, 90.0, 90.0);
+
+        bot(url(serverA)).sendActions("main", List.of(
+                Action.checkSession(1784975936),
+                new PutLayer(1, List.of(1L, 2L, 1L))
+                        .withAnimationMode(AnimationMode.SEQUENTIAL)
+                        .at(LayerPosition.below(DefaultLayers.FOREGROUND_LAYER_ID)),
+                PutObject.onOwnFrame(1, 2, 0xff0000ff, 2, line),
+                PutObject.onFrame(2, DefaultLayers.BACKGROUND_FRAME_ID, 0xff0000ff, 2, line),
+                Action.removeObject(3),
+                Action.removeLayer(4)));
+
+        // Opaque red is 4278190335 on the wire: the colour goes out unsigned, never as a negative int.
+        assertThat(lastBody.get()).isEqualTo("{\"actions\":["
+                + "{\"type\":\"sp.checkSession\",\"session\":1784975936},"
+                + "{\"type\":\"sp.putLayer\",\"localId\":1,\"frameLocalIds\":[1,2,1],"
+                + "\"animationMode\":\"sequential\",\"position\":{\"at\":\"below\",\"layerId\":0}},"
+                + "{\"type\":\"sp.putObject\",\"localId\":1,\"frameLocalId\":2,\"objectType\":\"line.floats\","
+                + "\"rgba\":4278190335,\"lineWidth\":2.0,\"points\":[10.0,10.0,90.0,90.0]},"
+                + "{\"type\":\"sp.putObject\",\"localId\":2,\"frameId\":1,\"objectType\":\"line.floats\","
+                + "\"rgba\":4278190335,\"lineWidth\":2.0,\"points\":[10.0,10.0,90.0,90.0]},"
+                + "{\"type\":\"sp.removeObject\",\"localId\":3},"
+                + "{\"type\":\"sp.removeLayer\",\"localId\":4}]}");
+    }
+
+    @Test
+    void rejectsRequestsOverTheSizeLimitsWithoutHittingTheNetwork() throws IOException {
+        var hits = new AtomicInteger();
+        serverA = jsonServer(200, "{}", new AtomicReference<>(), new AtomicReference<>(), hits);
+        var bot = bot(url(serverA));
+        var remove = Action.removeObject(1);
+        var line = PutObject.onFrame(1, 0, 255, 2, Collections.nCopies(4000, 123456.789));
+
+        assertThatThrownBy(() -> bot.sendActions("main", Collections.nCopies(Action.MAX_ACTIONS + 1, remove)))
+                .isInstanceOf(ScribblePubValidationError.class)
+                .hasMessageContaining("invalid actions: actions");
+        assertThatThrownBy(() -> bot.sendActions("main", Collections.nCopies(300, line)))
+                .isInstanceOf(ScribblePubValidationError.class)
+                .hasMessageContaining("more than 4194304");
+        assertThat(hits.get()).isZero();
+
+        bot.sendActions("main", Collections.nCopies(Action.MAX_ACTIONS, remove));
+        assertThat(hits.get()).isEqualTo(1);
     }
 
     private ScribblePubBot bot(String baseUrl) {

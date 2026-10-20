@@ -280,11 +280,16 @@ public final class ScribblePubBot {
         }
 
         var errors = Validation.actions(actions);
+        var response = new HookResponse(actions);
+        if (errors.isEmpty()) {
+            // Only once the rest holds: a drawing-heavy reply is worth serialising twice, an invalid one is not.
+            errors = Validation.payloadSize(json.write(response).length);
+        }
         if (!errors.isEmpty()) {
             log.error("Handler returned invalid actions for scribble.pub room {}: {}", trigger.room(), errors);
             return HookResult.failure(500, "invalid actions");
         }
-        return HookResult.ok(new HookResponse(actions));
+        return HookResult.ok(response);
     }
 
     /**
@@ -334,17 +339,23 @@ public final class ScribblePubBot {
      * the platform's default instances, or from a redirect this method itself already followed. That
      * map is updated with whichever instance served the request.
      *
+     * <p>Drawing actions need the drawing permission in the room (and the fill tool permission for
+     * filled polygons or lines wider than 2.5); without it the platform answers 403 before anything
+     * is drawn. Bot drawing does not count as activity, so it cannot keep a room from being cleared.
+     *
      * @throws ScribblePubValidationError when {@code room} is blank or {@code actions} is invalid
      * @throws ScribblePubApiError        when the platform answers non-2xx
      */
     public void sendActions(String room, List<Action> actions) {
         var key = requireRoom(room);
         Validation.require("actions", Validation.actions(actions));
+        var body = json.write(new HookResponse(actions));
+        Validation.require("actions", Validation.payloadSize(body.length));
 
         var origin = roomInstanceMap.getOrDefault(key, baseUrl);
         var path = "/api/v0/room/" + encodePathSegment(room) + "/actions";
 
-        var response = post("send actions", origin + path, new HookResponse(actions));
+        var response = post("send actions", origin + path, body);
 
         var servedBy = originOf(response.uri());
         if (!servedBy.equalsIgnoreCase(origin)) {
@@ -362,9 +373,9 @@ public final class ScribblePubBot {
     /**
      * Reads a room's scratchpad as the list of messages that rebuild it.
      *
-     * <p>Only the currently visible static snapshot, not full animation timelines: for most layers
-     * that is the first frame, and for layers in "Roll" mode the frame currently rolled. Prefer
-     * {@link #getScratchpadState(String)} unless you want to reduce the messages yourself.
+     * <p>Each layer comes with its whole frame program and the objects of all of its frames, so
+     * animations are there in full; {@link ScratchpadState#visibleFrameId} picks the frame viewers
+     * see. Prefer {@link #getScratchpadState(String)} unless you want to reduce the messages yourself.
      *
      * <p>Calls {@code GET /api/v0/room/{room}/scratchpad/state} — the per-app endpoint introduced in
      * upstream 0.4.0. (The room-wide {@code /state} it replaced kept working until 0.5.0 upstream;
@@ -467,12 +478,16 @@ public final class ScribblePubBot {
 
     /** Issues an authenticated POST, turning any non-2xx answer into a {@link ScribblePubApiError}. */
     private HttpResponse<String> post(String operation, String url, Object body) {
+        return post(operation, url, json.write(body));
+    }
+
+    private HttpResponse<String> post(String operation, String url, byte[] body) {
         var request = HttpRequest.newBuilder(URI.create(url))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .timeout(requestTimeout)
-                .POST(HttpRequest.BodyPublishers.ofByteArray(json.write(body)))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
 
         var response = send(operation, url, request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

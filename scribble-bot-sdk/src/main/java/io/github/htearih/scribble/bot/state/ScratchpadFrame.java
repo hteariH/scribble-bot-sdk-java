@@ -8,8 +8,9 @@ import java.util.List;
 /**
  * A frame in a {@link ScratchpadState}: the child of a layer that holds the drawing objects.
  *
- * <p>Only one frame per layer renders at any moment, and the platform currently sends exactly one —
- * the static preview.
+ * <p>Only one frame per layer renders at any moment — see {@link ScratchpadState#visibleFrameId}. A
+ * frame repeated in its layer's program is still one frame: what is drawn on it shows on every tick
+ * it appears on.
  *
  * <p>Mutable, like the state that owns it — see {@link ScratchpadState} for why.
  */

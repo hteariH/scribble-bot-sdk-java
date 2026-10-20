@@ -6,11 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.github.htearih.scribble.bot.model.Action;
 import io.github.htearih.scribble.bot.model.AddMessage;
 import io.github.htearih.scribble.bot.model.ChatAddressedTrigger;
+import io.github.htearih.scribble.bot.model.DefaultLayers;
 import io.github.htearih.scribble.bot.model.HookResponse;
 import io.github.htearih.scribble.bot.model.OutboundReplyTarget;
+import io.github.htearih.scribble.bot.model.PutObject;
 import io.github.htearih.scribble.bot.model.Trigger;
 import io.github.htearih.scribble.bot.model.UnsupportedTrigger;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -285,6 +288,26 @@ class ScribblePubBotTest {
         // Both a messageId and a localId: the platform would reject it, so the SDK does first.
         bot.onChatAddressed(trigger ->
                 List.of(new AddMessage("hi", null, new OutboundReplyTarget(1L, 2L, null, null))));
+
+        assertThat(deliver(TAGGED).status()).isEqualTo(500);
+    }
+
+    @Test
+    void answersAHookWithDrawingActions() {
+        var line = PutObject.onFrame(1, DefaultLayers.FOREGROUND_FRAME_ID, 0xff0000ff, 2, List.of(1.0, 2.0));
+        bot.onChatAddressed(trigger -> List.of(Action.addMessage("look"), line));
+
+        var result = deliver(TAGGED);
+
+        assertThat(result.status()).isEqualTo(200);
+        assertThat(actions(result)).containsExactly(new AddMessage("look"), line);
+    }
+
+    @Test
+    void rejectsAHookReplyOverThePayloadSizeLimit() {
+        // 300 objects of 2000 long-winded points each: well within the action count, far past 4 MB.
+        var line = PutObject.onFrame(1, 0, 255, 2, Collections.nCopies(4000, 123456.789));
+        bot.onChatAddressed(trigger -> Collections.nCopies(300, line));
 
         assertThat(deliver(TAGGED).status()).isEqualTo(500);
     }

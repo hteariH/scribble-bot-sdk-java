@@ -20,10 +20,18 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  *                       permalinks like {@code https://scribble.pub/main/167}
  * @param canvasWidth    the width of the room canvas; every object coordinate is in this space
  * @param canvasHeight   the height of the room canvas
+ * @param animationTickMs how long each animation frame lasts, in milliseconds — see
+ *                       {@link #animationTickMs()}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ScratchpadSessionMetaMessage(
-        String type, long currentSession, long eventId, long seqId, int canvasWidth, int canvasHeight)
+        String type,
+        long currentSession,
+        long eventId,
+        long seqId,
+        int canvasWidth,
+        int canvasHeight,
+        Integer animationTickMs)
         implements RoomMessage {
 
     /** The wire discriminator for this message. */
@@ -31,5 +39,21 @@ public record ScratchpadSessionMetaMessage(
 
     public ScratchpadSessionMetaMessage {
         type = type == null ? TYPE : type;
+    }
+
+    /** Metadata without an {@link #animationTickMs()}, as servers before upstream 0.5.0 sent it. */
+    public ScratchpadSessionMetaMessage(
+            String type, long currentSession, long eventId, long seqId, int canvasWidth, int canvasHeight) {
+        this(type, currentSession, eventId, seqId, canvasWidth, canvasHeight, null);
+    }
+
+    /**
+     * How long each frame of the drawing's animations lasts, in milliseconds: 125 (8 frames a
+     * second) now, but 250 for older drawings. It may change again, so read it rather than hardcode
+     * it. {@code null} only from a server older than upstream 0.5.0.
+     */
+    @Override
+    public Integer animationTickMs() {
+        return animationTickMs;
     }
 }

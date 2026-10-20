@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
     @JsonSubTypes.Type(value = ScratchpadSessionMetaMessage.class, name = ScratchpadSessionMetaMessage.TYPE),
     @JsonSubTypes.Type(value = ScratchpadLayerMessage.class, name = ScratchpadLayerMessage.TYPE),
     @JsonSubTypes.Type(value = ScratchpadSetLayerOrderMessage.class, name = ScratchpadSetLayerOrderMessage.TYPE),
+    @JsonSubTypes.Type(value = ScratchpadRollMessage.class, name = ScratchpadRollMessage.TYPE),
     @JsonSubTypes.Type(value = ScratchpadObjectMessage.class, name = ScratchpadObjectMessage.TYPE),
     @JsonSubTypes.Type(value = ScratchpadLastEventIdMessage.class, name = ScratchpadLastEventIdMessage.TYPE)
 })
@@ -29,6 +30,7 @@ public sealed interface RoomMessage
         permits ScratchpadSessionMetaMessage,
                 ScratchpadLayerMessage,
                 ScratchpadSetLayerOrderMessage,
+                ScratchpadRollMessage,
                 ScratchpadObjectMessage,
                 ScratchpadLastEventIdMessage,
                 UnknownRoomMessage {
